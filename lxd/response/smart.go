@@ -34,8 +34,8 @@ func SmartError(err error) Response {
 					return &errorResponse{httpStatusCode, err}
 				}
 
-				// If the error hasn't been wrapped, use a generic error.
-				return &errorResponse{httpStatusCode, nil}
+				// If the error hasn't been wrapped, return its own message.
+				return &errorResponse{httpStatusCode, err}
 			}
 		}
 	}
