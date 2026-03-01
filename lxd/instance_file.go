@@ -28,6 +28,25 @@ import (
 	"github.com/canonical/lxd/shared/revert"
 )
 
+// sftpNotFoundError enriches os.ErrNotExist errors with path context.
+// When the parent directory does not exist, it reports that specifically.
+// For all other errors, it returns them unchanged.
+func sftpNotFoundError(client *sftp.Client, path string, err error) error {
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	parentDir := filepath.Dir(path)
+	if parentDir != path {
+		_, statErr := client.Stat(parentDir)
+		if statErr != nil {
+			return fmt.Errorf("Parent directory %q does not exist: %w", parentDir, err)
+		}
+	}
+
+	return fmt.Errorf("Path %q not found: %w", path, err)
+}
+
 func instanceFileHandler(d *Daemon, r *http.Request) response.Response {
 	s := d.State()
 
@@ -169,7 +188,7 @@ func instanceFileGet(s *state.State, inst instance.Instance, path string) respon
 	// Get the file stats.
 	stat, err := client.Lstat(path)
 	if err != nil {
-		return response.SmartError(err)
+		return response.SmartError(sftpNotFoundError(client, path, err))
 	}
 
 	fileType := "file"
@@ -333,7 +352,7 @@ func instanceFileHead(inst instance.Instance, path string) response.Response {
 	// Get the file stats.
 	stat, err := client.Lstat(path)
 	if err != nil {
-		return response.SmartError(err)
+		return response.SmartError(sftpNotFoundError(client, path, err))
 	}
 
 	fileType := "file"
@@ -514,7 +533,7 @@ func instanceFilePost(s *state.State, inst instance.Instance, path string, r *ht
 		// Open/create the file.
 		file, err := client.OpenFile(path, fileMode)
 		if err != nil {
-			return response.SmartError(err)
+			return response.SmartError(sftpNotFoundError(client, path, err))
 		}
 
 		defer func() { _ = file.Close() }()
@@ -580,7 +599,7 @@ func instanceFilePost(s *state.State, inst instance.Instance, path string, r *ht
 		// Create the symlink.
 		err = client.Symlink(string(target), path)
 		if err != nil {
-			return response.SmartError(err)
+			return response.SmartError(sftpNotFoundError(client, path, err))
 		}
 
 		s.Events.SendLifecycle(inst.Project().Name, lifecycle.InstanceFilePushed.Event(inst, logger.Ctx{"path": path}))
@@ -594,7 +613,7 @@ func instanceFilePost(s *state.State, inst instance.Instance, path string, r *ht
 		// Create the directory.
 		err = client.Mkdir(path)
 		if err != nil {
-			return response.SmartError(err)
+			return response.SmartError(sftpNotFoundError(client, path, err))
 		}
 
 		// Set file permissions.
@@ -674,7 +693,7 @@ func instanceFileDelete(s *state.State, inst instance.Instance, path string) res
 	// Delete the file.
 	err = client.Remove(path)
 	if err != nil {
-		return response.SmartError(err)
+		return response.SmartError(sftpNotFoundError(client, path, err))
 	}
 
 	s.Events.SendLifecycle(inst.Project().Name, lifecycle.InstanceFileDeleted.Event(inst, logger.Ctx{"path": path}))
